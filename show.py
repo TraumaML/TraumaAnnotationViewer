@@ -124,7 +124,6 @@ class Corpus(object):
             unit = self.units[unit_name]
             UnitFile(self, unit).write()
             units_written.append(unit)
-            break # >>>
         contexts = self.contexts.get_significant_contexts()
         #print(contexts['Event']['bullied'])
         for tag in self.contexts.data:
@@ -695,8 +694,8 @@ class ExtentKwic(object):
             self.keyphrase.append(('KEY', annotation.text[p1:p2]))
             # insert the text between fragments (the key-internal context)
             if i+1 < len(annotation.positions):
-                substring = annotation.text[p2:annotation.positions[i+1][0]]
-                self.keyphrase.append(('CONTEXT', annotation.text[p2:annotation.positions[i+1][0]]))
+                text = annotation.text[p2:annotation.positions[i+1][0]]
+                self.keyphrase.append(('CONTEXT', text))
 
     def as_html(self, add_location=False):
         """Returns self as an instance of html.TR."""
@@ -708,8 +707,9 @@ class ExtentKwic(object):
         td_key.add(SPACE, span_id)
         dtrs = [td_source, td_left, td_key]
         if add_location:
-            location = "%s:%s" % (self.annotation.unit.name, self.annotation.start)
-            dtrs.insert(0, TD(dtrs=[Text(location)]))
+            name = self.annotation.unit.name
+            fname = Href("kwic-%s.html" % name, name)
+            dtrs.insert(0, TD(dtrs=[Text('%s : %s' % (fname, self.annotation.start))]))
         return TR(dtrs=dtrs)
 
     def keyphrase_as_html(self):
@@ -790,19 +790,22 @@ class IndexFile(HtmlFile):
         table = Tag('table', attrs={'cellspacing': 0, 'cellpadding': 5, 'border': 1})
         self.content.add(P(header), NL, Tag('blockquote', dtrs=[table, NL]), NL)
         tds = [SPACE, Tag('td', dtrs=[Text('')]), NL,
+               SPACE, Tag('td', dtrs=[Text('file')]), NL,
                SPACE, Tag('td', dtrs=[Text('text size')]), NL,
                SPACE, Tag('td', dtrs=[Text('extents')]), NL,
                SPACE, Tag('td', dtrs=[Text('relations')]), NL,
                SPACE, Tag('td', dtrs=[Text('annotators')]), NL]
         tr = Tag('tr', dtrs=tds)
         table.add(tr, NL)
-        for unit in self.units:
+        for i, unit in enumerate(self.units):
             name = unit.name
             annotators = ', '.join(unit.annotators)
+            count = Text(str(i))
             size = Text(unit.text_size())
             extents = Text(unit.get_number_of_extents())
             relations = Text(unit.get_number_of_relations())
-            tds = [SPACE, Tag('td', dtrs=[Href('kwic-%s.html' % name, name)]), NL,
+            tds = [SPACE, Tag('td', attrs={'align': 'right'}, dtrs=[count]), NL,
+                   SPACE, Tag('td', dtrs=[Href('kwic-%s.html' % name, name)]), NL,
                    SPACE, Tag('td', attrs={'align': 'right'}, dtrs=[size]), NL,
                    SPACE, Tag('td', attrs={'align': 'right'}, dtrs=[extents]), NL,
                    SPACE, Tag('td', attrs={'align': 'right'}, dtrs=[relations]), NL,
@@ -905,8 +908,8 @@ class ContextFile(HtmlFile):
         wider_extent_count = len(wider_extent_annos)
         table.add(TR(dtrs=[TD(attrs=self.attrs(25), dtrs=[Text(total_count)]),
                            TD(attrs=self.attrs(20), dtrs=[Text(count)]),
-                           TD(attrs=self.attrs(40), dtrs=[Text(pmi)]),
                            TD(attrs=self.attrs(20), dtrs=[Text(wider_extent_count)]),
+                           TD(attrs=self.attrs(40), dtrs=[Text(pmi)]),
                            TD(dtrs=[text_left, SPACE, text_key])]))
 
     def _add_contexts(self, pair_data):
@@ -948,11 +951,9 @@ def red_subscript(text):
     return Tag('sub', attrs={'class': 'darkred'}, dtrs=[Text(text)])
 
 
-## Main function
-
 def run():
-    date = sys.argv[1]
-    corpus = Corpus(os.path.join(BRAT_BACKUP, date))
+    """The main function to create all HTML files."""
+    corpus = Corpus(os.path.join(BRAT_BACKUP, sys.argv[1]))
     corpus.write_reports()
 
 
