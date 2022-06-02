@@ -26,6 +26,7 @@ ones (before 5_12_22) often have one text file missing.
 import os, sys, glob
 from math import log
 from collections import Counter
+from utils import split, index
 from html import Tag, Text, Span, P, TR, TD, H1, H3, H4
 from html import Href, Anchor, NL, BR, SPACE
 
@@ -233,12 +234,19 @@ class AnnotationUnit(object):
     name         -  string
     fnames       -  list of files in the unit
     text         -  text of the unit (the primary source)
+    char2sent    -  { character-offset => sentence-number }
     annotators   -  set of annotator names
     annotations  -  Annotations
 
     The name of the unit is the part of the filename that all files in the unit
-    share, for example, if the two files in the unit are 107176272_0.ann and
-    107176272_0.txt then the name is 107176272_0.
+    share. For example, if the files in the unit are
+
+      .../brat_backup/5_18_22/EHR/Ann/104054131_0.ann
+      .../brat_backup/5_18_22/EHR/Ann/104054131_0.txt
+      .../brat_backup/5_18_22/EHR/Mei/104054131_0.ann
+      .../brat_backup/5_18_22/EHR/Mei/104054131_0.txt
+
+    Then the name is 104054131_0.
 
     """
 
@@ -250,6 +258,7 @@ class AnnotationUnit(object):
         self.fnames = fnames
         self.text = None
         self._initialize_text()
+        self.char2sent = index(split(self.text))
         self.annotators = set(self.get_annotator(fname) for fname in self.fnames)
         self.annotations = Annotations(unit=self)
         self.annotations.add_unit_annotations()
@@ -522,6 +531,7 @@ class Annotation(object):
 
     unit        -  AnnotationUnit
     text        -  unit.text
+    char2sent   -  unit.char2sent
     annotator   -  annotator (string)
     identifier  -  annotation identifier (for example T154)
     tag         -  annotation tag (Event|Symptom|...)
@@ -538,6 +548,7 @@ class Annotation(object):
     def __init__(self, unit, annotator, fields):
         self.unit = unit
         self.text = unit.text
+        self.char2sent = unit.char2sent
         self.annotator = annotator
         self.identifier = fields[0]
         self.tag = fields[1].split()[0]
@@ -552,6 +563,7 @@ class ExtentAnnotation(Annotation):
     positions      -  offsets as a list ([[828,8295],[8304,8309]])
     start          -  start of first fragment (integer)
     end            -  end of last fragment (integer)
+    sentence_no    -  sentence number of the first fragment (integer)
     left_context   -  N=CONTEXT characters to the left of start position
     right_context  -  N=CONTEXT characters to the right of end position
 
@@ -559,8 +571,6 @@ class ExtentAnnotation(Annotation):
     annotations (that is, annotaitons with more than one fragment). There is
     currently no middle context, but there may be a future need for it.
 
-    The keyphrase is a bit of an odd duck here, want to get rid of it.
-    
     """
     
     def __init__(self, unit, annotator, fields):
@@ -571,6 +581,7 @@ class ExtentAnnotation(Annotation):
         self.positions = [[int(pos) for pos in pair.split(':')] for pair in pairs]
         self.start = self.positions[0][0]
         self.end = self.positions[-1][-1]
+        self.sentence_no = self.char2sent[self.start] + 1
         self.left_context = self.get_left_context()
         self.right_context = self.get_right_context()
 
@@ -709,7 +720,9 @@ class ExtentKwic(object):
         if add_location:
             name = self.annotation.unit.name
             fname = Href("kwic-%s.html" % name, name)
-            dtrs.insert(0, TD(dtrs=[Text('%s : %s' % (fname, self.annotation.start))]))
+            s = self.annotation.sentence_no
+            p = self.annotation.start
+            dtrs.insert(0, TD(dtrs=[Text('%s : %s : %s' % (fname, s, p))]))
         return TR(dtrs=dtrs)
 
     def keyphrase_as_html(self):
