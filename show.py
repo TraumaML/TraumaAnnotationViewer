@@ -3,7 +3,7 @@
 Show all the annotations in a series of concordances for each file and show some
 global analyses on the left context.
 
-$ python run.py <BACKUP>
+$ python show.py <BACKUP>
 
 This runs on a directory with all Brat backups as defined in the BRAT_BACKUP
 global variable, the argument identifies the backup we want.
@@ -92,11 +92,14 @@ class Corpus(object):
 
     def _get_units(self):
         units = {}
+        bad_units = { '101075704_1', '105663850_0', '105929865_0', '106357503_0' }
         for unit_name, fnames in self.split_files().items():
             if False:
                 print('>>>', unit_name)
                 for fname in fnames:
                     print('        ', os.sep.join(fname.split(os.sep)[-2:]))
+            if unit_name in bad_units:
+                continue
             units[unit_name] = AnnotationUnit(self, unit_name, fnames)
         return units
 
