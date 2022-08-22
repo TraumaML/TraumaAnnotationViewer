@@ -1,5 +1,6 @@
 import re
 
+
 def split(text):
     """Split a text in a list of triples, where each triple has a line number,
     a line, and an end-of-line or the empty string."""
@@ -13,7 +14,8 @@ def split(text):
         result.append((i, line, eol))
     return result
 
-def index(lines):
+
+def index_characters(lines):
     """Take the result of splitting a text and build an index from character
     offsets to sentence numbers, with sentence numbers starting at 0 because
     line numbers from split() start at 0."""
@@ -29,11 +31,11 @@ def index(lines):
 
 if __name__ == '__main__':
 
-    text = open('backup.sh').read()
-    lines = split(text)
-    idx = index(lines)
+    test_text = open('backup.sh').read()
+    test_lines = split(test_text)
+    idx = index_characters(test_lines)
 
-    for i, line, eol in lines:
+    for i, line, eol in test_lines:
         print("%3d [%s, %s]" % (i, repr(line), repr(eol)))
 
     current_sentence_no = -1

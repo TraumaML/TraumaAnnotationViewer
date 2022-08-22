@@ -1,4 +1,4 @@
-"""html.py
+"""HTML Utitilies.
 
 Adapted from ~/Dropbox/code/python/html.py.
 
@@ -130,8 +130,8 @@ class Span(Tag):
 
 class P(Tag):
     """Simple paragraph with just some text."""
-    def __init__(self, text):
-        super().__init__('p')
+    def __init__(self, text, **attrs):
+        super().__init__('p', **attrs)
         self.add(Text(text))
 
 class Href(Tag):
