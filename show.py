@@ -3,9 +3,10 @@
 Show all the annotations in a series of concordances for each file and show some
 global analyses on the left context.
 
-$ python show.py <BACKUP>
+$ python show.py (--debug) <BACKUP>
 
-This runs on directory BACKUP inside BRAT_BACKUP, which has all Brat backups.
+This runs on directory BACKUP inside BRAT_BACKUP, which has all Brat backups. With
+the --debug flag the script will only print one of the annotation files.
 
 This works with backups where the directory has a subdirectory named EHR, which
 has subdirectories named for the annotators (Ann, Mei and Phil). The annotator
@@ -25,14 +26,17 @@ should work on the most recent ones.
 
 # TODO: figure out the problem with unit 105663850_0
 
-import os, sys, glob
+import os, sys, glob, logging
 from math import log
-from typing import Union
+from typing import Union, TypeVar
 from collections import Counter
 
 from utils import split, index_characters
 from html import Tag, Text, Span, P, TR, TD, H1, H3
 from html import Href, Anchor, NL, SPACE
+
+# Just for the sake of type hints
+ExtentAnnotation = TypeVar("ExtentAnnotation")
 
 # location of the annotation files
 BRAT_BACKUP = '/Users/marc/Dropbox/Shared/NLP-Trauma Project (R21)/brat_backup'
@@ -50,6 +54,11 @@ MINIMUM_PMI = 5
 
 # Set of annotators that we are interested in
 ANNOTATORS = {'Ann', 'Mei', 'Phil'}
+
+# Debugging flag that can be set to True with the --debug flag
+DEBUG = False
+
+logging.basicConfig(level=logging.ERROR)
 
 
 class Corpus(object):
@@ -83,7 +92,7 @@ class Corpus(object):
 
     def _get_filenames(self):
         """Return a list of filenames for the corpus, but only include those
-        where the annotator in the ANNOTATORS set."""
+        where the annotator is in the ANNOTATORS set."""
         fnames = glob.glob("%s/EHR/*/[0-9]*_[0-9]*" % self.directory)
         filtered_fnames = []
         for f in fnames:
@@ -124,15 +133,13 @@ class Corpus(object):
         units_written = []
         for unit_name in self.get_unit_names():
             unit = self.units[unit_name]
-            ### THIS NEEDS TO BE CHANGED AFTER ALL DEBUGGING
-            # if unit_name != '100370074_1':
-            #     continue
+            if DEBUG and unit_name != '100370074_1':
+                continue
             UnitFile(self, unit).write()
             units_written.append(unit)
         for tag in self.contexts.data:
             ExtentsFile(self, tag).write()
             ContextFile(self, tag).write()
-        # breakpoint()
         ExtentsFile(self, 'Event', event_type='other').write()
         IndexFile(self, units_written).write()
 
@@ -179,19 +186,19 @@ class Vocabulary(object):
         self.bigrams = self._get_bigrams()
         self.number_of_bigrams = len(self.bigrams)
         self.bigram_counter = Counter(self.bigrams)
-        self.pmis = self._calculate_pmi_scores()
+        self.pmi_scores = self._calculate_pmi_scores()
 
     def _calculate_pmi_scores(self) -> dict:
         """Calculate the pointwise mutual information for all word pairs. This
-        is restricted to word that are adjacent. For each pair <x,y> we store
+        is restricted to words that are adjacent. For each pair <x,y> we store
         P(x,y), P(x), P(y) and PMI(x,y)."""
         pmi_scores = {}
         for pair, count in self.bigram_counter.items():
             p_x_y = count / self.number_of_bigrams
             p_x = self.token_counter[pair[0]] / self.number_of_tokens
             p_y = self.token_counter[pair[1]] / self.number_of_tokens
-            pmi = log(p_x_y / (p_x * p_y))
-            pmi_scores[pair] = (p_x_y, p_x, p_y, pmi)
+            pmi_score = log(p_x_y / (p_x * p_y))
+            pmi_scores[pair] = (p_x_y, p_x, p_y, pmi_score)
         return pmi_scores
 
     def __len__(self):
@@ -210,7 +217,7 @@ class Vocabulary(object):
     def get_pmi(self, x: str, y: str) -> Union[float, None]:
         """Return PMI(x,y) for a pair of words. If the PMI of a pair is not
         defined return None."""
-        _P_x_y, _p_x, _p_y, pmi = self.pmis.get((x, y), (None, None, None, None))
+        _Pxy, _Px, _Py, pmi = self.pmi_scores.get((x, y), (None, None, None, None))
         return pmi
 
     def print_pmi(self, threshold: float, limit=None):
@@ -219,7 +226,7 @@ class Vocabulary(object):
         if limit is None:
             limit = sys.maxsize
         printed = 0
-        for pair, (p_x_y, p_x, p_y, pmi) in self.pmis.items():
+        for pair, (p_x_y, p_x, p_y, pmi) in self.pmi_scores.items():
             if printed <= limit:
                 c_x_y = self.bigram_counter[pair]
                 c_x = self.token_counter[pair[0]]
@@ -293,11 +300,18 @@ class AnnotationUnit(object):
         """Return the length of the text. Return 0 if the text is None."""
         return 0 if self.text is None else len(self.text)
 
-    def get_extent(self, annotator: str, identifier: str):
+    def get_extent(self, annotator: str, identifier: str) -> ExtentAnnotation:
+        """Returns the ExtentAnnotation given the annotator and identifier."""
         return self.annotations.get_extent(annotator, identifier)
 
-    def get_extents(self):
+    def get_extents(self) -> list:
         return self.annotations.get_extents()
+
+    def get_extents_grouped_by_tag(self) -> dict:
+        extents = { tag: [] for tag in EXTENT_TAGS }
+        for extent in sorted(self.get_extents()):
+            extents[extent.tag].append(extent)
+        return extents
 
     def get_relations(self):
         return self.annotations.get_relations()
@@ -416,8 +430,8 @@ class ExtentAnnotation(Annotation):
         val = self.attributes.get(name)
         return None if val is None else val[1]
 
-    def get_key_string(self):
-        # This just returns the string from the text
+    def get_key_string(self) -> str:
+        """Returns the string from the text."""
         return self.text[self.start:self.end]
 
     def first_token(self):
@@ -429,10 +443,11 @@ class ExtentAnnotation(Annotation):
             # annotation offsets are not in the text file
             return None
 
-    def previous_token(self):
+    def previous_token(self, lower=False):
         """Return the token just before the key phrase."""
         try:
-            return self.left_context.split()[-1]
+            token = self.left_context.split()[-1]
+            return token.lower() if lower else token
         except IndexError:
             # for those cases where we have truncated text files where the
             # annotation offsets are not in the text file
@@ -591,6 +606,11 @@ class Annotations(object):
         else:
             return self.grouped_extents_idx[tag].get(extent, [])
 
+    def find_extent_annotation(self, tag: str, extent: str):
+        # TODO: I don't like how we have this method and get_extent(), smooth
+        # TODO: this out a bit
+        return self.grouped_extents_idx[tag].get(extent, [])
+
     def print_grouped_extents_summary(self):
         """Print count for each tag."""
         for tag in self.grouped_extents:
@@ -610,7 +630,7 @@ class Contexts(object):
     corpus       -  Corpus
     vocabulary   -  Vocabulary (same as corpus.vocabulary)
     annotations  -  Annotations (same as corpus.annotations)
-    data         -  { tag => { extent => list of (term1, term2, pmi) }}
+    data         -  { tag => { extent => Context }}
 
     """
 
@@ -622,82 +642,134 @@ class Contexts(object):
         self.vocabulary = corpus.vocabulary
         self.annotations = corpus.annotations
         self.data = {tag: {} for tag in EXTENT_TAGS}
-        self.pmis_found = {}
-        self.pmis_missed = {}
+        self.pmis_found = {tag: 0 for tag in EXTENT_TAGS}
+        self.pmis_missed = {tag: 0 for tag in EXTENT_TAGS}
         for tag in self.annotations.grouped_extents_idx:
-            self.pmis_found[tag] = 0
-            self.pmis_missed[tag] = 0
             for keyphrase in self.annotations.grouped_extents_idx[tag]:
-                self.data[tag][keyphrase] = {'count': 0, 'data': {}}
-                for extent in self.annotations.grouped_extents_idx[tag][keyphrase]:
-                    self._add_extent(tag, keyphrase, extent)
-        print('PMIS FOUND: ', self.pmis_found)
-        print('PMIS MISSED:', self.pmis_missed)
-        # breakpoint()
-        # self.print_data()
-        # self.print_significant_data()
+                self.add_context(tag, keyphrase)
+        self.report()
 
-    def _add_extent(self, tag: str, keyphrase: str, extent: ExtentAnnotation):
-        t1, t2 = extent.previous_token(), extent.first_token()
-        pmi = self.vocabulary.get_pmi(t1, t2)
-        if None not in (t1, t2, pmi):
-            d = self.data[tag][keyphrase]
-            d['count'] += 1
-            d['data'].setdefault((t1, t2), {'count': 0, 'pmi': pmi, 'data': []})
-            d['data'][(t1, t2)]['count'] += 1
-            d['data'][(t1, t2)]['data'].append(extent)
-            self.pmis_found[tag] += 1
-        else:
-            # TODO: this happens way too often, find out why
-            # print('--- MISSED PMI', extent, t1, t2, pmi)
-            self.pmis_missed[tag] += 1
+    def add_context(self, tag: str, keyphrase: str):
+        """Collect context information for keyphrase and add it to self.data3."""
+        extents = self.annotations.grouped_extents_idx[tag][keyphrase]
+        self.data[tag][keyphrase] = Context(self, tag, keyphrase, extents)
 
     def get_significant_contexts(self, tag: str):
         """Returns a subset of the contexts for the tag, only including those
-        where the frequency and PMI are above a certain threshold."""
+        where the frequency and PMI are above a certain threshold. Ignores contexts
+        that are not alphanumeric."""
         contexts = {}
-        for keyphrase in list(self.data[tag].keys()):
-            count = self.data[tag][keyphrase]['count']
-            contexts[keyphrase] = { 'count': count, 'data': {} }
-            phrase_data = self.data[tag][keyphrase]['data']
-            for pair in phrase_data:
-                pair_data = phrase_data[pair]
-                pair_count = pair_data['count']
-                pair_pmi = pair_data['pmi']
-                if pair_pmi >= MINIMUM_PMI and pair_count >= MINIMUM_FREQUENCY:
-                    contexts[keyphrase]['data'][pair] = pair_data
+        for keyphrase, context in self.data[tag].items():
+            for left_context, data in context.left_contexts.items():
+                if (data.pmi is not None
+                        and left_context.isalnum()
+                        and data.pmi >= MINIMUM_PMI
+                        and data.count_xy >= MINIMUM_FREQUENCY):
+                    contexts.setdefault(keyphrase, {})
+                    contexts[keyphrase][left_context] = data
         return contexts
 
-    def print_data(self):
-        for tag in list(self.data.keys())[:10]:
-            print(tag)
-            for keyphrase in list(self.data[tag].keys())[:10]:
-                count = self.data[tag][keyphrase]['count']
-                phrase_data = self.data[tag][keyphrase]['data']
-                print('    %3d  %s' % (count, protect(keyphrase)))
-                for pair in phrase_data:
-                    pair_data = phrase_data[pair]
-                    pair_count = pair_data['count']
-                    pair_pmi = pair_data['pmi']
-                    print('       %3d  %.2f  %s ' % (pair_count, pair_pmi, pair[0]))
+    def report(self):
+        print('PMIS FOUND: ', self.pmis_found)
+        print('PMIS MISSED:', self.pmis_missed)
 
-    def print_significant_data(self):
-        for tag in list(self.data.keys()):
-            print(tag)
-            for keyphrase in list(self.data[tag].keys()):
-                count = self.data[tag][keyphrase]['count']
-                phrase_data = self.data[tag][keyphrase]['data']
-                collected_data = []
-                for pair in phrase_data:
-                    pair_data = phrase_data[pair]
-                    pair_count = pair_data['count']
-                    pair_pmi = pair_data['pmi']
-                    if pair_pmi >= MINIMUM_PMI and pair_count >= MINIMUM_FREQUENCY:
-                        collected_data.append('       %3d  %.2f  %s ' % (pair_count, pair_pmi, pair[0]))
-                if collected_data:
-                    print('    %3d  %s' % (count, protect(keyphrase)))
-                    for c in collected_data:
-                        print(c)
+
+class Context(object):
+
+    """Contains information about a particular extent annotation of a particular
+    type, as for example the Event "assault".
+
+    tag            -  extent type, for example "Event" or "Symptom"
+    keyphrase      -  the extent string
+    contexts       -  an instance of Contexts
+    extents        -  list of instances of ExtentAnnotation
+    count          -  length of self.extents
+    probability    -  self.count divided by the number of bigrams
+    left_contexts  -  list of instances of LeftContext
+
+    """
+
+    def __init__(self, contexts: Contexts, tag: str, keyphrase: str, extents: list):
+        n = contexts.vocabulary.number_of_bigrams
+        self.tag = tag
+        self.keyphrase = keyphrase
+        self.contexts = contexts
+        self.extents = extents
+        self.count = len(extents)
+        self.probability = self.count / n
+        self.left_contexts = {}
+        for token, extents in self.grouped_extents().items():
+            self.left_contexts[token] = PairData(self, token, extents)
+        self.report()
+
+    def grouped_extents(self) -> dict:
+        """Return the extents as a dictionary indexed on the previous token."""
+        result = {}
+        for extent in self.extents:
+            token = extent.previous_token(lower=True)
+            if token is not None:
+                result.setdefault(token, []).append(extent)
+        return result
+
+    def report(self):
+        """Report in any missing PMIs."""
+        for token, left_context in self.left_contexts.items():
+            if left_context.pmi is None:
+                self.contexts.pmis_missed[self.tag] += 1
+            else:
+                self.contexts.pmis_found[self.tag] += 1
+                logging.warning("Could not get PMI for [%s] [%s]"
+                                % (left_context, self.keyphrase))
+
+
+class PairData(object):
+
+    """Some statistics and other data about the pair of an extent and the token
+    occurring to its left.
+
+    token     -  the token to the left of the extent
+    context   -  the Context associated with the extent
+    extents   -  the extents from the Context that have token to its left
+    count_x   -  total count of token in the corpus
+    count_y   -  total count of the extent in the corpus
+    count_xy  -  the number of times token and extent occur together
+    Px        -  the probability of x (the token)
+    Py        -  the probability of y (the extent)
+    Pxy       -  the probability of xy (token followed by extent)
+    pmi       -  the mutual information of x and y
+
+    There are two more variables that are desperately awaiting a better name:
+
+    xy_extents  -  list of extent annotation where xy is he keyphrase
+    xy_count    -  the number of times when xy is annotated as an extent
+
+    """
+
+    def __init__(self, context: Context, token: str, extents: list):
+        n = context.contexts.vocabulary.number_of_bigrams
+        self.token = token
+        self.context = context
+        self.extents = extents
+        self.count_x = context.contexts.vocabulary.token_counter.get(token, 0)
+        self.count_y = context.count
+        self.count_xy = len(self.extents)
+        self.Px = self.count_x / n
+        self.Py = context.probability
+        self.Pxy = self.count_xy / n
+        self.pmi = self.calculate_pmi()
+        # this is the number of times that xy is actually the extent as well as
+        # the list of those extents
+        larger_extent = "%s %s" % (token, context.keyphrase)
+        annotations = self.context.contexts.annotations
+        x = annotations.find_extent_annotation(self.context.tag, larger_extent)
+        self.xy_count = len(x)
+        self.xy_extents = x
+
+    def calculate_pmi(self):
+        try:
+            return pmi(self.Pxy, self.Px, self.Py)
+        except ZeroDivisionError:
+            return None
 
 
 class ExtentKwic(object):
@@ -722,7 +794,7 @@ class ExtentKwic(object):
         [('KEY', 'car'), ('CONTEXT', 'behind'), ('KEY', 'hit her')]
 
     """
-    
+
     def __init__(self, annotation: ExtentAnnotation):
         self.annotation = annotation
         self.annotator = annotation.annotator
@@ -779,9 +851,9 @@ class HtmlFile(object):
     def __init__(self, title: str):
         self.fname = None          # will be set in subclasses
         self.content = Tag('div')
-        dtrs = [Tag('head', dtrs=[self.style_tag(), NL]), NL,
-                Tag('body', dtrs=[H1(title), self.content, NL]), NL]
-        self.html_obj = Tag('html', dtrs=dtrs)
+        self.html_obj = Tag('html',
+                            dtrs=[Tag('head', dtrs=[self.style_tag(), NL]), NL,
+                                  Tag('body', dtrs=[H1(title), self.content, NL]), NL])
 
     def style_tag(self):
         """Return a <styles> tag for the head portion of the HTML."""
@@ -835,7 +907,6 @@ class IndexFile(HtmlFile):
         header = "Global observations on left context:\n"
         hrefs = Tag('ul')
         self.content.add(P(header), hrefs, NL)
-        # the contexts for each tag
         for tag in sorted(EXTENT_TAGS):
             hrefs.add(Tag('li', dtrs=[Href('context-%s.html' % tag, tag)]))
 
@@ -876,10 +947,7 @@ class UnitFile(HtmlFile):
         super().__init__(unit.name)
         self.unit = unit
         self.fname = 'html/%s/kwic-%s.html' % (corpus.name, self.unit.name)
-        # TODO: should really get these from the Annotations on the unit
-        extents = { tag: [] for tag in EXTENT_TAGS }
-        for extent in sorted(self.unit.get_extents()):
-            extents[extent.tag].append(extent)
+        extents = self.unit.get_extents_grouped_by_tag()
         self._add_navigation(extents)
         self._add_extents(extents)
         self._add_relations()
@@ -973,58 +1041,48 @@ class ContextFile(HtmlFile):
 
     tag          -  "Event" | "Perpetrator" | "Substance" | "Symptom" | "Temporal_Frame"
     fname        -  html/<CORPUS_NAME>/context-<tag>.html
-    corpus       -  Corpus
-    contexts     -  Contexts (same as corpus.contexts)
-    annotations  -  Annotations (same as corpus.annotations)
-    extents      -  { extent: str => [ ExtentAnnotation, ... ] }
 
     """
 
     def __init__(self, corpus: Corpus, tag: str):
+        """Create HTML specifications for a context file for a tag. Includes a
+        summary and a list of KWICs for each significant <left-context, extent>
+        pair."""
         super().__init__("%s left context observations" % tag)
         self.tag = tag
         self.fname = 'html/%s/context-%s.html' % (corpus.name, tag)
-        self.corpus = corpus
-        self.contexts = corpus.contexts
-        self.annotations = corpus.annotations
-        self.extents = self.annotations.get_grouped_extents(tag)
-        contexts_for_tag = self.contexts.get_significant_contexts(tag)
-        # print('>>>', contexts_for_tag.keys())
-        # print('|||', contexts_for_tag.get('bullied'))
+        contexts_for_tag = corpus.contexts.get_significant_contexts(tag)
         for extent in sorted(contexts_for_tag):
-            self.contexts_for_extent = contexts_for_tag[extent]
-            if self.contexts_for_extent['data']:
-                total_count = str(self.contexts_for_extent['count'])
-                for pair, pair_data in self.contexts_for_extent['data'].items():
-                    self._add_summary(total_count, pair, pair_data, extent)
-                    self._add_contexts(pair_data)
+            for left_context in sorted(contexts_for_tag[extent]):
+                data = contexts_for_tag[extent][left_context]
+                self._add_summary(left_context, extent, data)
+                self._add_contexts(data.extents + data.xy_extents)
 
-    def _add_summary(self, total_count, pair, pair_data, extent):
+    def _add_summary(self, left_context: str, extent: str, data: PairData):
+
+        def attrs(width):
+            return {'width': width, 'align': 'right'}
+
+        def span(text):
+            return Span(class_='keyword', dtrs=[Text(protect('[%s]' % text))])
+
         table = Tag('table', nl=True, attrs={'class': 'fancy', 'cellpadding': 8})
         self.content.add(table)
-        pmi = "%.2f" % pair_data['pmi']
-        count = str(pair_data['count'])
-        text_left = Span(dtrs=[Text(protect(pair[0]))])
-        text_key = Span(class_='keyword', dtrs=[Text(protect('[%s]' % extent))])
-        wider_extent = '%s %s' % (pair[0], extent)
-        wider_extent_annos = self.extents.get(wider_extent, [])
-        wider_extent_count = len(wider_extent_annos)
-        table.add(TR(dtrs=[TD(attrs=self.attrs(25), dtrs=[Text(total_count)]),
-                           TD(attrs=self.attrs(20), dtrs=[Text(count)]),
-                           TD(attrs=self.attrs(20), dtrs=[Text(wider_extent_count)]),
-                           TD(attrs=self.attrs(40), dtrs=[Text(pmi)]),
-                           TD(dtrs=[text_left, SPACE, text_key])]))
+        table.add(TR(dtrs=[TD(attrs=attrs(40), dtrs=[Text("%.2f" % data.pmi)]),
+                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_x)]),
+                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_y)]),
+                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_xy)]),
+                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.xy_count)]),
+                           # TD(attrs=attrs(100), dtrs=[Text("Px=%.2E" % data['Px'])]),
+                           # TD(attrs=attrs(100), dtrs=[Text("Py=%.2E" % data['Py'])]),
+                           # TD(attrs=attrs(100), dtrs=[Text("Pxy=%.2E" % data['Pxy'])]),
+                           TD(dtrs=[span(left_context), SPACE, span(extent)])]))
 
-    def _add_contexts(self, pair_data: dict):
+    def _add_contexts(self, lextents):
         table = Tag('table', nl=True, attrs={'cellpadding': 8})
         self.content.add(Tag('blockquote', dtrs=[table]))
-        lextents = pair_data['data']
         for lextent in lextents:
             table.add(ExtentKwic(lextent).as_html(add_location=True))
-
-    @staticmethod
-    def attrs(width):
-        return {'width': width, 'align': 'right'}
 
 
 def adjust_tag(fields: list) -> bool:
@@ -1092,12 +1150,25 @@ def red_subscript(text: str) -> Tag:
     return Tag('sub', attrs={'class': 'darkred'}, dtrs=[Text(text)])
 
 
-def run():
+def pmi(p_xy: float, p_x: float, p_y: float):
+    """Return the point-wise mutual information score of x and y, given the
+    following:
+    - p_xy - the probability of x and y occurring together
+    - p_x - the probability of x
+    - p_y - the probability of y
+    """
+    return log(p_xy / (p_x * p_y))
+
+
+def run(date):
     """The main function to create all HTML files."""
-    corpus = Corpus(os.path.join(BRAT_BACKUP, sys.argv[1]))
+    corpus = Corpus(os.path.join(BRAT_BACKUP, date))
     corpus.write_reports()
 
 
 if __name__ == '__main__':
-    
-    run()
+
+    if sys.argv[1] == '--debug':
+        DEBUG = True
+    date = sys.argv[-1]
+    run(date)
