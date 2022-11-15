@@ -8,6 +8,9 @@ $ python show.py (--debug) <BACKUP>
 This runs on directory BACKUP inside BRAT_BACKUP, which has all Brat backups. With
 the --debug flag the script will only print one of the annotation files.
 
+The BRAT_BACKUP variable may need to be edited, depending on where the Brat data
+are located.
+
 This works with backups where the directory has a subdirectory named EHR, which
 has subdirectories named for the annotators (Ann, Mei and Phil). The annotator
 directories are flat and have files like
@@ -35,10 +38,7 @@ from utils import split, index_characters
 from html import Tag, Text, Span, P, TR, TD, H1, H3
 from html import Href, Anchor, NL, SPACE
 
-# Just for the sake of type hints
-ExtentAnnotation = TypeVar("ExtentAnnotation")
-
-# location of the annotation files
+# location of the annotation files, edit as needed
 BRAT_BACKUP = '/Users/marc/Dropbox/Shared/NLP-Trauma Project (R21)/brat_backup'
 
 # tags that we are interested in
@@ -53,10 +53,13 @@ MINIMUM_FREQUENCY = 2
 MINIMUM_PMI = 5
 
 # Set of annotators that we are interested in
-ANNOTATORS = {'Ann', 'Mei', 'Phil'}
+ANNOTATORS = {'Ann', 'Mei', 'Phil', 'adjudicator'}
 
 # Debugging flag that can be set to True with the --debug flag
 DEBUG = False
+
+# Just for the sake of type hints
+ExtentAnnotation = TypeVar("ExtentAnnotation")
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -127,9 +130,9 @@ class Corpus(object):
     def write_reports(self):
         """Write all annotations from all units to files as well as all context
         observations. Also write an index that ties all files together."""
-        html_dir = os.path.join('html', self.name)
-        if not os.path.exists(html_dir):
-            os.makedirs(html_dir)
+        out_dir = os.path.join('out', self.name)
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
         units_written = []
         for unit_name in self.get_unit_names():
             unit = self.units[unit_name]
@@ -217,8 +220,7 @@ class Vocabulary(object):
     def get_pmi(self, x: str, y: str) -> Union[float, None]:
         """Return PMI(x,y) for a pair of words. If the PMI of a pair is not
         defined return None."""
-        _Pxy, _Px, _Py, pmi = self.pmi_scores.get((x, y), (None, None, None, None))
-        return pmi
+        return self.pmi_scores.get((x, y), (None, None, None, None))[-1]
 
     def print_pmi(self, threshold: float, limit=None):
         """Print the PMI for all pairs as long as the PMI > threshold. Stop
@@ -226,14 +228,14 @@ class Vocabulary(object):
         if limit is None:
             limit = sys.maxsize
         printed = 0
-        for pair, (p_x_y, p_x, p_y, pmi) in self.pmi_scores.items():
+        for pair, (p_x_y, p_x, p_y, pmi_score) in self.pmi_scores.items():
             if printed <= limit:
                 c_x_y = self.bigram_counter[pair]
                 c_x = self.token_counter[pair[0]]
                 c_y = self.token_counter[pair[1]]
-                if pmi > threshold and c_x_y > 1:
+                if pmi_score > threshold and c_x_y > 1:
                     print("%2d %f  %3d %f  %3d %f  %7.4f  %s"
-                          % (c_x_y, p_x_y, c_x, p_x, c_y, p_y, pmi, pair))
+                          % (c_x_y, p_x_y, c_x, p_x, c_y, p_y, pmi_score, pair))
                     printed += 1
 
 
@@ -817,7 +819,7 @@ class ExtentKwic(object):
         td_key = self.keyphrase_as_html()
         td_key.add(Text('&nbsp;&nbsp;' + self.right_context))
         td_key.add(SPACE, span_id)
-        dtrs = [td_source, td_left, td_key]
+        dtrs = [SPACE, td_source, NL, SPACE, td_left, NL, SPACE, td_key, NL]
         if add_location:
             name = self.annotation.unit.name
             fname = Href("kwic-%s.html" % name, name)
@@ -888,7 +890,7 @@ class IndexFile(HtmlFile):
         title = "Analysis of annotations in %s" % corpus.name
         super().__init__(title)
         self.units = units
-        self.fname = 'html/%s/index.html' % corpus.name
+        self.fname = 'out/%s/index.html' % corpus.name
         self._add_extents_links()
         self._add_left_context_links()
         self._add_annotation_units_table()
@@ -946,7 +948,7 @@ class UnitFile(HtmlFile):
     def __init__(self, corpus: Corpus, unit: AnnotationUnit):
         super().__init__(unit.name)
         self.unit = unit
-        self.fname = 'html/%s/kwic-%s.html' % (corpus.name, self.unit.name)
+        self.fname = 'out/%s/kwic-%s.html' % (corpus.name, self.unit.name)
         extents = self.unit.get_extents_grouped_by_tag()
         self._add_navigation(extents)
         self._add_extents(extents)
@@ -1006,16 +1008,19 @@ class UnitFile(HtmlFile):
 
 class ExtentsFile(HtmlFile):
 
-    """Used to print all extents of a particular tag with all its occurrences."""
+    """Used to print all extents of a particular tag with all its occurrences.
+
+    tag     -  the extent tag for the file
+    corpus  -  an instance of Corpus
+
+    """
 
     def __init__(self, corpus: Corpus, tag: str, event_type=None):
         super().__init__("%s instances" % tag)
         self.tag = tag
         self.corpus = corpus
-        if event_type is None:
-            self.fname = 'html/%s/extents-%s.html' % (corpus.name, tag)
-        else:
-            self.fname = 'html/%s/extents-%s-%s.html' % (corpus.name, tag, event_type)
+        suffix = '' if event_type is None else "-%s" % event_type
+        self.fname = 'out/%s/extents-%s%s.html' % (corpus.name, tag, suffix)
         annotations_dict = self.corpus.annotations.get_grouped_extents(tag)
         for extent in sorted(annotations_dict):
             annotations = annotations_dict[extent]
@@ -1023,7 +1028,7 @@ class ExtentsFile(HtmlFile):
                 event_types = [a.get_attribute('Event_Type') for a in annotations]
                 if 'Other' not in event_types:
                     continue
-            s = "&lt;%s>" % extent
+            s = protect("<%s>" % extent)
             self.content.add(P(s, nl=True, attrs={'class': 'extent'}))
             self._add_extents(annotations)
 
@@ -1040,7 +1045,7 @@ class ContextFile(HtmlFile):
     particular tag.
 
     tag          -  "Event" | "Perpetrator" | "Substance" | "Symptom" | "Temporal_Frame"
-    fname        -  html/<CORPUS_NAME>/context-<tag>.html
+    fname        -  out/<CORPUS_NAME>/context-<tag>.html
 
     """
 
@@ -1050,7 +1055,7 @@ class ContextFile(HtmlFile):
         pair."""
         super().__init__("%s left context observations" % tag)
         self.tag = tag
-        self.fname = 'html/%s/context-%s.html' % (corpus.name, tag)
+        self.fname = 'out/%s/context-%s.html' % (corpus.name, tag)
         contexts_for_tag = corpus.contexts.get_significant_contexts(tag)
         for extent in sorted(contexts_for_tag):
             for left_context in sorted(contexts_for_tag[extent]):
@@ -1068,21 +1073,24 @@ class ContextFile(HtmlFile):
 
         table = Tag('table', nl=True, attrs={'class': 'fancy', 'cellpadding': 8})
         self.content.add(table)
-        table.add(TR(dtrs=[TD(attrs=attrs(40), dtrs=[Text("%.2f" % data.pmi)]),
-                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_x)]),
-                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_y)]),
-                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_xy)]),
-                           TD(attrs=attrs(30), dtrs=[Text("%s" % data.xy_count)]),
+        table.add(TR(dtrs=[SPACE, TD(attrs=attrs(40), dtrs=[Text("%.2f" % data.pmi)]), NL,
+                           SPACE, TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_x)]), NL,
+                           SPACE, TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_y)]), NL,
+                           SPACE, TD(attrs=attrs(30), dtrs=[Text("%s" % data.count_xy)]), NL,
+                           SPACE, TD(attrs=attrs(30), dtrs=[Text("%s" % data.xy_count)]), NL,
                            # TD(attrs=attrs(100), dtrs=[Text("Px=%.2E" % data['Px'])]),
                            # TD(attrs=attrs(100), dtrs=[Text("Py=%.2E" % data['Py'])]),
                            # TD(attrs=attrs(100), dtrs=[Text("Pxy=%.2E" % data['Pxy'])]),
-                           TD(dtrs=[span(left_context), SPACE, span(extent)])]))
+                           SPACE, TD(dtrs=[span(left_context), SPACE, span(extent)]), NL]),
+                  NL)
+
+        print(f"{self.tag}\t{extent}\t{data.pmi}\t{data.count_x}\t{data.count_y}\t{data.count_xy}\t{data.xy_count}")
 
     def _add_contexts(self, lextents):
         table = Tag('table', nl=True, attrs={'cellpadding': 8})
         self.content.add(Tag('blockquote', dtrs=[table]))
         for lextent in lextents:
-            table.add(ExtentKwic(lextent).as_html(add_location=True))
+            table.add(ExtentKwic(lextent).as_html(add_location=True), NL)
 
 
 def adjust_tag(fields: list) -> bool:
@@ -1170,5 +1178,5 @@ if __name__ == '__main__':
 
     if sys.argv[1] == '--debug':
         DEBUG = True
-    date = sys.argv[-1]
-    run(date)
+    backup_date = sys.argv[-1]
+    run(backup_date)
