@@ -8,6 +8,8 @@ $ python show.py (--debug) <BACKUP>
 This runs on directory BACKUP inside BRAT_BACKUP, which has all Brat backups. With
 the --debug flag the script will only print one of the annotation files.
 
+Output is written to "out/<BACKUP>".
+
 The BRAT_BACKUP variable may need to be edited, depending on where the Brat data
 are located.
 
@@ -25,8 +27,12 @@ ones (before 5_12_22) often have one text file missing. The code is not guarante
 to work on all backup directories, even if they have the EHR subdirectory, but it
 should work on the most recent ones.
 
+Note: the directory structure was changed for 8_2_22 and the code below was updated
+to allow of that exception.
+
 """
 
+# TODO: directory structure was changed for 8_2_22, the EHR subdirectory was removed
 # TODO: figure out the problem with unit 105663850_0
 
 import os, sys, glob, logging
@@ -96,7 +102,10 @@ class Corpus(object):
     def _get_filenames(self):
         """Return a list of filenames for the corpus, but only include those
         where the annotator is in the ANNOTATORS set."""
-        fnames = glob.glob("%s/EHR/*/[0-9]*_[0-9]*" % self.directory)
+        print(self.name)
+        subdir = '' if self.name == '8_2_22' else 'EHR/'
+        pattern = "%s/%s*/[0-9]*_[0-9]*" % (self.directory, subdir)
+        fnames = glob.glob(pattern)
         filtered_fnames = []
         for f in fnames:
             annotator = os.path.normpath(f).split(os.sep)[-2]
